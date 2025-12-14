@@ -8,7 +8,7 @@ import humanize
 from .backend import FunctionSpec, compile_prompt_to_md, query
 from .interpreter import ExecutionResult
 from .journal import Journal, Node
-from .utils import data_preview
+from .utils import data_preview, copy_with_excludes, safe_clear_folder
 from .utils.config import Config
 from .utils.metric import MetricValue, WorstMetricValue
 from .utils.response import extract_code, extract_text_up_to_code, wrap_code
@@ -22,6 +22,7 @@ def format_time(time_in_sec: int):
 
 ExecCallbackType = Callable[[str, bool], ExecutionResult]
 
+# Modified: check if files are prepared rather than .csv
 review_func_spec = FunctionSpec(
     name="submit_review",
     json_schema={
@@ -31,19 +32,33 @@ review_func_spec = FunctionSpec(
                 "type": "boolean",
                 "description": "true if the output log shows that the execution failed or has some bug, otherwise false.",
             },
-            "has_csv_submission": {
+            # "has_csv_submission": {
+            #     "type": "boolean",
+            #     "description": "true if the code saves the predictions on the test data"
+            #     " in a `submission.csv` file in the `./submission/` directory, otherwise false."
+            #     " Note that the file MUST be saved in the ./submission/ directory for this to be evaluated as true."
+            #     " Otherwise, it should be evaluated as false."
+            #     " You can assume the ./submission/ directory exists and is writable.",
+            # },
+            "is_prepared": {
                 "type": "boolean",
-                "description": "true if the code saves the predictions on the test data"
-                " in a `submission.csv` file in the `./submission/` directory, otherwise false."
-                " Note that the file MUST be saved in the ./submission/ directory for this to be evaluated as true."
+                "description": "true if all files are ready for submission in the `./submission/` directory, otherwise false."
+                " Note that files MUST be saved in the ./submission/ directory for this to be evaluated as true."
                 " Otherwise, it should be evaluated as false."
                 " You can assume the ./submission/ directory exists and is writable.",
             },
+            # "summary": {
+            #     "type": "string",
+            #     "description": "write a short summary (2-3 sentences) describing "
+            #     " the empirical findings. Alternatively mention if there is a bug or"
+            #     " the submission.csv was not properly produced."
+            #     " DO NOT suggest fixes or improvements.",
+            # },
             "summary": {
                 "type": "string",
                 "description": "write a short summary (2-3 sentences) describing "
                 " the empirical findings. Alternatively mention if there is a bug or"
-                " the submission.csv was not properly produced."
+                " the necessary files were not properly produced."
                 " DO NOT suggest fixes or improvements.",
             },
             "metric": {
@@ -57,7 +72,8 @@ review_func_spec = FunctionSpec(
         },
         "required": [
             "is_bug",
-            "has_csv_submission",
+            # "has_csv_submission",
+            "is_prepared",
             "summary",
             "metric",
             "lower_is_better",
@@ -122,14 +138,9 @@ class Agent:
             "numpy",
             "pandas",
             "scikit-learn",
-            "statsmodels",
-            "xgboost",
-            "lightGBM",
             "torch",
             "torchvision",
-            "torch-geometric",
-            "bayesian-optimization",
-            "timm",
+            "transformers"
         ]
         random.shuffle(pkgs)
         pkg_str = ", ".join([f"`{p}`" for p in pkgs])
@@ -145,40 +156,59 @@ class Agent:
         tot_time_remaining = self.acfg.time_limit - tot_time_elapsed
         exec_timeout = int(min(self.cfg.exec.timeout, tot_time_remaining))
 
+        # Modified: we adapt guideline for general-purpose software engineering
         impl_guideline = [
+            # f"<TOTAL_TIME_REMAINING: {format_time(tot_time_remaining)}>",
+            # f"<TOTAL_STEPS_REMAINING: {self.acfg.steps - self.current_step}>",
+            # "The code should **implement the proposed solution**, **print the value of the evaluation metric computed on a hold-out validation set**,",
+            # "**AND MOST IMPORTANTLY SAVE PREDICTIONS ON THE PROVIDED UNLABELED TEST DATA IN A `submission.csv` FILE IN THE ./submission/ DIRECTORY.**",
+            # "The code should be a single-file python program that is self-contained and can be executed as-is.",
+            # "No parts of the code should be skipped, don't terminate the before finishing the script.",
+            # "Your response should only contain a single code block.",
+            # f"Be aware of the running time of the code, it should complete within {humanize.naturaldelta(exec_timeout)}.",
+            # 'All the provided input data is stored in "./input" directory.',
+            # '**You MUST submit predictions on the provided unlabeled test data in a `submission.csv` file** file in the "./working" directory as described in the task description** This is extremely important since this file is used for grading/evaluation. DO NOT FORGET THE submission.csv file!',
+            # 'You can also use the "./working" directory to store any temporary files that your code needs to create.',
+            # "REMEMBER THE ./submission/submission.csv FILE!!!!! The correct directory is important too.",
+            
             f"<TOTAL_TIME_REMAINING: {format_time(tot_time_remaining)}>",
             f"<TOTAL_STEPS_REMAINING: {self.acfg.steps - self.current_step}>",
-            "The code should **implement the proposed solution**, **print the value of the evaluation metric computed on a hold-out validation set**,",
-            "**AND MOST IMPORTANTLY SAVE PREDICTIONS ON THE PROVIDED UNLABELED TEST DATA IN A `submission.csv` FILE IN THE ./submission/ DIRECTORY.**",
-            "The code should be a single-file python program that is self-contained and can be executed as-is.",
+            "The code should **implement the proposed solution**, **execute with the provided data**,",
+            "**AND MOST IMPORTANTLY SAVE NECESSARY FILES IN THE ./submission/ DIRECTORY.**",
+            "The whole project can contain serval code files, but you should strictly follow the instructions to provide the exact API for evaluation.",
             "No parts of the code should be skipped, don't terminate the before finishing the script.",
-            "Your response should only contain a single code block.",
-            f"Be aware of the running time of the code, it should complete within {humanize.naturaldelta(exec_timeout)}.",
-            'All the provided input data is stored in "./input" directory.',
-            '**You MUST submit predictions on the provided unlabeled test data in a `submission.csv` file** file in the "./working" directory as described in the task description** This is extremely important since this file is used for grading/evaluation. DO NOT FORGET THE submission.csv file!',
+            "Your response should only contain a single code block, thus you need to edit separate code files in different steps.",
+            f"Be aware of the execution time of the code, it should complete within {humanize.naturaldelta(exec_timeout)}.",
+            'All the provided data (datasets and pretrained weights) is stored in "." (current) directory.',
+            '**You MUST submit all necessary files (which may include codes, models or results)** in the "./submission" directory as described in the task description**. This is extremely important since they will be used for grading/evaluation!',
             'You can also use the "./working" directory to store any temporary files that your code needs to create.',
-            "REMEMBER THE ./submission/submission.csv FILE!!!!! The correct directory is important too.",
+            "REMEMBER THE ./submission FOLDER!!!!! The correct directory is important too.",
         ]
-        if self.acfg.expose_prediction:
-            impl_guideline.append(
-                "The implementation should include a predict() function, "
-                "allowing users to seamlessly reuse the code to make predictions on new data. "
-                "The prediction function should be well-documented, especially the function signature."
-            )
+        # if self.acfg.expose_prediction:
+        #     impl_guideline.append(
+        #         "The implementation should include a predict() function, "
+        #         "allowing users to seamlessly reuse the code to make predictions on new data. "
+        #         "The prediction function should be well-documented, especially the function signature."
+        #     )
 
-        if self.acfg.k_fold_validation > 1:
-            impl_guideline.append(
-                f"The evaluation should be based on {self.acfg.k_fold_validation}-fold cross-validation but only if that's an appropriate evaluation for the task at hand."
-            )
+        # if self.acfg.k_fold_validation > 1:
+        #     impl_guideline.append(
+        #         f"The evaluation should be based on {self.acfg.k_fold_validation}-fold cross-validation but only if that's an appropriate evaluation for the task at hand."
+        #     )
 
         return {"Implementation guideline": impl_guideline}
 
     @property
     def _prompt_resp_fmt(self):
+        # Modified: we adapt response format for general-purpose software engineering
         return {
             "Response format": (
+                # "Your response should be a brief outline/sketch of your proposed solution in natural language (3-5 sentences), "
+                # "followed by a single markdown code block (wrapped in ```) which implements this solution and prints out the evaluation metric. "
+                # "There should be no additional headings or text in your response. Just natural language text followed by a newline and then the markdown code block. "
+
                 "Your response should be a brief outline/sketch of your proposed solution in natural language (3-5 sentences), "
-                "followed by a single markdown code block (wrapped in ```) which implements this solution and prints out the evaluation metric. "
+                "followed by a single markdown code block (wrapped in ```) which implements a code file. "
                 "There should be no additional headings or text in your response. Just natural language text followed by a newline and then the markdown code block. "
             )
         }
@@ -207,17 +237,25 @@ class Agent:
         return "", completion_text  # type: ignore
 
     def _draft(self) -> Node:
+        # Modifed: we highlight instruction following for the task
         introduction = (
-            "You are a Kaggle grandmaster attending a competition. "
-            "In order to win this competition, you need to come up with an excellent and creative plan "
-            "for a solution and then implement this solution in Python. We will now provide a description of the task."
+            # "You are a Kaggle grandmaster attending a competition. "
+            # "In order to win this competition, you need to come up with an excellent and creative plan "
+            # "for a solution and then implement this solution in Python. We will now provide a description of the task."
+
+            "You are an expert machine learning engineer attempting a task. "
+            "In order to complete this task, you need to strictly follow the instructions and write executable Python codes to handle the task. "
+            "We will now provide a description of the task."
         )
-        if self.acfg.obfuscate:
-            introduction = (
-                "You are an expert machine learning engineer attempting a task. "
-                "In order to complete this task, you need to come up with an excellent and creative plan "
-                "for a solution and then implement this solution in Python. We will now provide a description of the task."
-            )
+
+        # Modified: there is no need for obfuscation
+        # if self.acfg.obfuscate:
+        #     introduction = (
+        #         "You are an expert machine learning engineer attempting a task. "
+        #         "In order to complete this task, you need to come up with an excellent and creative plan "
+        #         "for a solution and then implement this solution in Python. We will now provide a description of the task."
+        #     )
+    
         prompt: Any = {
             "Introduction": introduction,
             "Task description": self.task_desc,
@@ -227,13 +265,26 @@ class Agent:
         prompt["Instructions"] |= self._prompt_resp_fmt
         prompt["Instructions"] |= {
             "Solution sketch guideline": [
+                # Modified: slightly modify the prompt
+                # "This first solution design should be relatively simple, without ensembling or hyper-parameter optimization.",
+                # "Take the Memory section into consideration when proposing the design,"
+                # " don't propose the same modelling solution but keep the evaluation the same.",
+                # "The solution sketch should be 3-5 sentences.",
+                # "Propose an evaluation metric that is reasonable for this task.",
+                # "Don't suggest to do EDA.",
+                # "The data is already prepared and available in the `./input` directory. There is no need to unzip any files.",
+
                 "This first solution design should be relatively simple, without ensembling or hyper-parameter optimization.",
                 "Take the Memory section into consideration when proposing the design,"
                 " don't propose the same modelling solution but keep the evaluation the same.",
                 "The solution sketch should be 3-5 sentences.",
                 "Propose an evaluation metric that is reasonable for this task.",
                 "Don't suggest to do EDA.",
-                "The data is already prepared and available in the `./input` directory. There is no need to unzip any files.",
+                "All the provided data (datasets and pretrained weights) is stored in \".\" (current) directory. You are free to conduct additional post-processing.",
+                "You need to explicitly write file name in the first line as a comment.",
+                "Strictly follow the format of \"# filename: example.py\". Wrong format will cause the failure of editing files."
+                "Later on, you can also specify the execution command to pass additional arguments in the second line as a comment.",
+                "Strictly follow the format of \"# cmd: python example.py\". By default we will use \"python\" with no additional arguments."
             ],
         }
         prompt["Instructions"] |= self._prompt_impl_guideline
@@ -248,19 +299,30 @@ class Agent:
         return new_node
 
     def _improve(self, parent_node: Node) -> Node:
+        # Modified: we do not require agents to improve upon given instructions
         introduction = (
-            "You are a Kaggle grandmaster attending a competition. You are provided with a previously developed "
-            "solution below and should improve it in order to further increase the (test time) performance. "
+            # "You are a Kaggle grandmaster attending a competition. You are provided with a previously developed "
+            # "solution below and should improve it in order to further increase the (test time) performance. "
+            # "For this you should first outline a brief plan in natural language for how the solution can be improved and "
+            # "then implement this improvement in Python based on the provided previous solution. "
+        
+            "You are an expert machine learning engineer attempting a task. You are provided with a previously developed "
+            "solution below and should improve it in order to further increase the performance, and finally approach the correct baseline solution. "
+            "The detailed metrics of baseline solution is mentioned in the instructions. "
+            "If you have achieved the expected metrics, there is no need for further improvement. "
             "For this you should first outline a brief plan in natural language for how the solution can be improved and "
             "then implement this improvement in Python based on the provided previous solution. "
         )
-        if self.acfg.obfuscate:
-            introduction = (
-                "You are an expert machine learning engineer attempting a task. You are provided with a previously developed "
-                "solution below and should improve it in order to further increase the (test time) performance. "
-                "For this you should first outline a brief plan in natural language for how the solution can be improved and "
-                "then implement this improvement in Python based on the provided previous solution. "
-            )
+
+        # Modified: there is no need for obfuscation
+        # if self.acfg.obfuscate:
+        #     introduction = (
+        #         "You are an expert machine learning engineer attempting a task. You are provided with a previously developed "
+        #         "solution below and should improve it in order to further increase the (test time) performance. "
+        #         "For this you should first outline a brief plan in natural language for how the solution can be improved and "
+        #         "then implement this improvement in Python based on the provided previous solution. "
+        #     )
+
         prompt: Any = {
             "Introduction": introduction,
             "Task description": self.task_desc,
@@ -271,15 +333,30 @@ class Agent:
             "Code": wrap_code(parent_node.code),
         }
 
+        # Modified: we do not require agents to improve upon given instructions, just correct the mistakes
         prompt["Instructions"] |= self._prompt_resp_fmt
         prompt["Instructions"] |= {
-            "Solution improvement sketch guideline": [
-                "The solution sketch should be a brief natural language description of how the previous solution can be improved.",
+            # "Solution improvement sketch guideline": [
+            #     "The solution sketch should be a brief natural language description of how the previous solution can be improved.",
+            #     "You should be very specific and should only propose a single actionable improvement.",
+            #     "This improvement should be atomic so that we can experimentally evaluate the effect of the proposed change.",
+            #     "Take the Memory section into consideration when proposing the improvement.",
+            #     "The solution sketch should be 3-5 sentences.",
+            #     "Don't suggest to do EDA.",
+            # ],
+
+            "Solution correction sketch guideline": [
+                "The solution sketch should be a brief natural language description of how the previous solution can be corrected.",
                 "You should be very specific and should only propose a single actionable improvement.",
                 "This improvement should be atomic so that we can experimentally evaluate the effect of the proposed change.",
                 "Take the Memory section into consideration when proposing the improvement.",
                 "The solution sketch should be 3-5 sentences.",
                 "Don't suggest to do EDA.",
+                "The data (including datasets and checkpoints) is already prepared and available in \".\" (current) directory. You are free to conduct additional post-processing.",
+                "You need to explicitly write file name in the first line as a comment.",
+                "Strictly follow the format of \"# filename: example.py\". Wrong format will cause the failure of editing files.",
+                "Later on, you can also specify the execution command to pass additional arguments in the second line as a comment.",
+                "Strictly follow the format of \"# cmd: python example.py\". By default we will use \"python\" with no additional arguments."
             ],
         }
         prompt["Instructions"] |= self._prompt_impl_guideline
@@ -290,21 +367,31 @@ class Agent:
         return new_node
 
     def _debug(self, parent_node: Node) -> Node:
+        # Modified: we adapt introduction for general-purpose software engineering
         introduction = (
-            "You are a Kaggle grandmaster attending a competition. "
-            "Your previous solution had a bug and/or did not produce a submission.csv, "
-            "so based on the information below, you should revise it in order to fix this. "
-            "Your response should be an implementation outline in natural language,"
-            " followed by a single markdown code block which implements the bugfix/solution."
+            # "You are a Kaggle grandmaster attending a competition. "
+            # "Your previous solution had a bug and/or did not produce a submission.csv, "
+            # "so based on the information below, you should revise it in order to fix this. "
+            # "Your response should be an implementation outline in natural language,"
+            # " followed by a single markdown code block which implements the bugfix/solution."
+
+            "You are an expert machine learning engineer attempting a task. "
+            "Your previous solution contains bugs, "
+            "thus you should revise previous codes based on the information below. "
+            "Your response should be an implementation outline in natural language, "
+            "followed by a single markdown code block which implements the bugfix/solution."
         )
-        if self.acfg.obfuscate:
-            introduction = (
-                "You are an expert machine learning engineer attempting a task. "
-                "Your previous solution had a bug and/or did not produce a submission.csv, "
-                "so based on the information below, you should revise it in order to fix this. "
-                "Your response should be an implementation outline in natural language,"
-                " followed by a single markdown code block which implements the bugfix/solution."
-            )
+
+        # Modified: there is no need for obfuscation
+        # if self.acfg.obfuscate:
+        #     introduction = (
+        #         "You are an expert machine learning engineer attempting a task. "
+        #         "Your previous solution had a bug and/or did not produce a submission.csv, "
+        #         "so based on the information below, you should revise it in order to fix this. "
+        #         "Your response should be an implementation outline in natural language,"
+        #         " followed by a single markdown code block which implements the bugfix/solution."
+        #     )
+
         prompt: Any = {
             "Introduction": introduction,
             "Task description": self.task_desc,
@@ -317,13 +404,17 @@ class Agent:
             "Bugfix improvement sketch guideline": [
                 "You should write a brief natural language description (3-5 sentences) of how the issue in the previous implementation can be fixed.",
                 "Don't suggest to do EDA.",
+                "You need to explicitly write file name in the first line as a comment.",
+                "Strictly follow the format of \"# filename: example.py\". Wrong format will cause the failure of editing files.",
+                "Later on, you can also specify the execution command to pass additional arguments in the second line as a comment.",
+                "Strictly follow the format of \"# cmd: python example.py\". By default we will use \"python\" with no additional arguments."
             ],
         }
         prompt["Instructions"] |= self._prompt_impl_guideline
 
         if self.acfg.data_preview:
             prompt["Data Overview"] = self.data_preview
-
+        
         plan, code = self.plan_and_code_query(prompt)
         new_node = Node(plan=plan, code=code, parent=parent_node)
         logger.info(f"Debugged node {parent_node.id} to create new node {new_node.id}")
@@ -356,14 +447,15 @@ class Agent:
             node=result_node,
             exec_result=exec_callback(result_node.code, True),
         )
-        # handle final cases where we missed buggy nodes somehow
-        if not result_node.is_buggy:
-            if not (self.cfg.workspace_dir / "submission" / "submission.csv").exists():
-                result_node.is_buggy = True
-                result_node.metric = WorstMetricValue()
-                logger.info(
-                    f"Actually, node {result_node.id} did not produce a submission.csv"
-                )
+        # Modified: we cannot hard-code missing files because required files vary
+        # # handle final cases where we missed buggy nodes somehow
+        # if not result_node.is_buggy:
+        #     if not (self.cfg.workspace_dir / "submission" / "submission.csv").exists():
+        #         result_node.is_buggy = True
+        #         result_node.metric = WorstMetricValue()
+        #         logger.info(
+        #             f"Actually, node {result_node.id} did not produce a submission.csv"
+        #         )
         self.journal.append(result_node)
 
         # if the result_node is the best node, cache its submission.csv and solution.py
@@ -371,20 +463,56 @@ class Agent:
         best_node = self.journal.get_best_node()
         if best_node is not None:
             if best_node.id == result_node.id:
+                # Modified: we rewrite this part for general-purpose software engineering
+                # logger.info(f"Node {result_node.id} is the best node so far")
+                # best_solution_dir = self.cfg.workspace_dir / "best_solution"
+                # best_solution_dir.mkdir(exist_ok=True, parents=True)
+                # # copy submission/submission.csv to best_submission/submission.csv
+                # best_submission_dir = self.cfg.workspace_dir / "best_submission"
+                # best_submission_dir.mkdir(exist_ok=True, parents=True)
+                # shutil.copy(
+                #     self.cfg.workspace_dir / "submission" / "submission.csv",
+                #     best_submission_dir,
+                # )
+                # # copy solution.py and relevant node id to best_solution/
+                # with open(best_solution_dir / "solution.py", "w") as f:
+                #     f.write(result_node.code)
+                # # take note of the node id of the best node
+                # with open(best_solution_dir / "node_id.txt", "w") as f:
+                #     f.write(str(result_node.id))
+
                 logger.info(f"Node {result_node.id} is the best node so far")
                 best_solution_dir = self.cfg.workspace_dir / "best_solution"
                 best_solution_dir.mkdir(exist_ok=True, parents=True)
-                # copy submission/submission.csv to best_submission/submission.csv
                 best_submission_dir = self.cfg.workspace_dir / "best_submission"
                 best_submission_dir.mkdir(exist_ok=True, parents=True)
-                shutil.copy(
-                    self.cfg.workspace_dir / "submission" / "submission.csv",
+
+                # clear the pre-exist files
+                safe_clear_folder(best_solution_dir)
+                safe_clear_folder(best_submission_dir)
+
+                # Modified: we should exclude best_soluton and best_submission, otherwise will cause recursion
+                # shutil.copytree(
+                #     self.cfg.workspace_dir,
+                #     best_submission_dir
+                # )
+                # # take note of the node id of the best node
+                # shutil.copytree(
+                #     self.cfg.workspace_dir,
+                #     best_solution_dir
+                # )
+
+                copy_with_excludes(
+                    self.cfg.workspace_dir,
                     best_submission_dir,
+                    excludes=["best_solution", "best_submission"]
                 )
-                # copy solution.py and relevant node id to best_solution/
-                with open(best_solution_dir / "solution.py", "w") as f:
-                    f.write(result_node.code)
-                # take note of the node id of the best node
+                copy_with_excludes(
+                    self.cfg.workspace_dir,
+                    best_solution_dir,
+                    excludes=["best_solution", "best_submission"]
+                )
+
                 with open(best_solution_dir / "node_id.txt", "w") as f:
                     f.write(str(result_node.id))
             else:
@@ -397,17 +525,25 @@ class Agent:
 
         node.absorb_exec_result(exec_result)
 
+        # Modified: we adapt introduction for general-purpose software engineering
         introduction = (
-            "You are a Kaggle grandmaster attending a competition. "
+            # "You are a Kaggle grandmaster attending a competition. "
+            # "You have written code to solve this task and now need to evaluate the output of the code execution. "
+            # "You should determine if there were any bugs as well as report the empirical findings."
+
+            "You are an expert machine learning engineer attempting a task. "
             "You have written code to solve this task and now need to evaluate the output of the code execution. "
             "You should determine if there were any bugs as well as report the empirical findings."
         )
-        if self.acfg.obfuscate:
-            introduction = (
-                "You are an expert machine learning engineer attempting a task. "
-                "You have written code to solve this task and now need to evaluate the output of the code execution. "
-                "You should determine if there were any bugs as well as report the empirical findings."
-            )
+
+        # Modified: there is no need for obfuscation
+        # if self.acfg.obfuscate:
+        #     introduction = (
+        #         "You are an expert machine learning engineer attempting a task. "
+        #         "You have written code to solve this task and now need to evaluate the output of the code execution. "
+        #         "You should determine if there were any bugs as well as report the empirical findings."
+        #     )
+
         prompt = {
             "Introduction": introduction,
             "Task description": self.task_desc,
@@ -431,23 +567,26 @@ class Agent:
         if not isinstance(response["metric"], float):
             response["metric"] = None
 
-        # do an extra check, to catch cases where judge fails
-        has_csv_submission = (
-            self.cfg.workspace_dir / "submission" / "submission.csv"
-        ).exists()
+        # Modified: we will not explicitly require .csv files
+        # # do an extra check, to catch cases where judge fails
+        # has_csv_submission = (
+        #     self.cfg.workspace_dir / "submission" / "submission.csv"
+        # ).exists()
 
         node.analysis = response["summary"]
         node.is_buggy = (
             response["is_bug"]
             or node.exc_type is not None
             or response["metric"] is None
-            or response["has_csv_submission"] == False
-            or has_csv_submission == False
+            # or response["has_csv_submission"] == False
+            # or has_csv_submission == False
         )
 
         if node.is_buggy:
             logger.info(
-                f"Parsed results: Node {node.id} is buggy and/or did not produce a submission.csv"
+                # f"Parsed results: Node {node.id} is buggy and/or did not produce a submission.csv"
+
+                f"Parsed results: Node {node.id} is buggy"
             )
             node.metric = WorstMetricValue()
         else:

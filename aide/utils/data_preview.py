@@ -31,6 +31,11 @@ def get_file_len_size(f: Path) -> tuple[int, str]:
 
 def file_tree(path: Path, depth=0) -> str:
     """Generate a tree structure of files in a directory"""
+    # Modified: ignore .git folder
+    path = Path(path)
+    if path.name == ".git":
+        return f"{' '*depth*4}(details of .git folder will not be shown)"
+    
     result = []
     files = [p for p in Path(path).iterdir() if not p.is_dir()]
     dirs = [p for p in Path(path).iterdir() if p.is_dir()]
@@ -39,7 +44,7 @@ def file_tree(path: Path, depth=0) -> str:
         result.append(f"{' '*depth*4}{p.name} ({get_file_len_size(p)[1]})")
     if len(files) > max_n:
         result.append(f"{' '*depth*4}... and {len(files)-max_n} other files")
-
+    
     for p in sorted(dirs):
         result.append(f"{' '*depth*4}{p.name}/")
         result.append(file_tree(p, depth + 1))
@@ -51,6 +56,9 @@ def _walk(path: Path):
     """Recursively walk a directory (analogous to os.walk but for pathlib.Path)"""
     for p in sorted(Path(path).iterdir()):
         if p.is_dir():
+            # Modified: ignore .git folder
+            if p.name == ".git":
+                continue
             yield from _walk(p)
             continue
         yield p
@@ -105,7 +113,14 @@ def preview_csv(p: Path, file_name: str, simple=True) -> str:
                     f"{name} has {df[col].nunique()} unique values. Some example values: {df[col].value_counts().head(4).index.tolist()}"
                 )
 
-    return "\n".join(out)
+    # Modified: limit preview of each file to first TRUNCATE_THRESHOLD characters
+    TRUNCATE_THRESHOLD = 500
+    result = "\n".join(out)
+
+    if len(result) > TRUNCATE_THRESHOLD:
+        return result[:TRUNCATE_THRESHOLD] + "...\n(truncated)"
+    else:
+        return result
 
 
 def preview_json(p: Path, file_name: str):
@@ -135,9 +150,21 @@ def preview_json(p: Path, file_name: str):
             f.seek(0)
             builder.add_object(json.load(f))
 
-    return f"-> {file_name} has auto-generated json schema:\n" + builder.to_json(
+    # Modified: limit preview of each file to first TRUNCATE_THRESHOLD characters
+    TRUNCATE_THRESHOLD = 500
+    result = f"-> {file_name} has auto-generated json schema:\n" + builder.to_json(
         indent=2
     )
+
+    if len(result) > TRUNCATE_THRESHOLD:
+        # truncate from last endl
+        for i in range(TRUNCATE_THRESHOLD, 0, -1):
+            if result[i] == '\n':
+                return result[:i] + "\n...(truncated)"
+        # fallback: directly truncate
+        return result[:TRUNCATE_THRESHOLD] + "...\n(truncated)"
+    else:
+        return result
 
 
 def generate(base_path, include_file_details=True, simple=False):
@@ -145,7 +172,7 @@ def generate(base_path, include_file_details=True, simple=False):
     Generate a textual preview of a directory, including an overview of the directory
     structure and previews of individual files
     """
-    tree = f"```\n{file_tree(base_path)}```"
+    tree = f"```\n{file_tree(base_path)}\n```"
     out = [tree]
 
     if include_file_details:
@@ -157,9 +184,16 @@ def generate(base_path, include_file_details=True, simple=False):
             elif fn.suffix == ".json":
                 out.append(preview_json(fn, file_name))
             elif fn.suffix in plaintext_files:
+                # Modified: limit preview of each file to first TRUNCATE_THRESHOLD characters
+                TRUNCATE_THRESHOLD = 500
                 if get_file_len_size(fn)[0] < 30:
+                    # limit the length of full path, avoid showing files in all subfolders    
                     with open(fn) as f:
                         content = f.read()
+                        
+                        if len(content) > TRUNCATE_THRESHOLD:
+                            content = content[:TRUNCATE_THRESHOLD] + "...\n(truncated)"
+                        
                         if fn.suffix in code_files:
                             content = f"```\n{content}\n```"
                         out.append(f"-> {file_name} has content:\n\n{content}")

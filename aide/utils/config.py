@@ -175,13 +175,19 @@ def load_task_desc(cfg: Config):
 
 def prep_agent_workspace(cfg: Config):
     """Setup the agent's workspace and preprocess data if necessary."""
-    (cfg.workspace_dir / "input").mkdir(parents=True, exist_ok=True)
+    # Modified: we ask the agent to copy files directly to workspace
+    # (cfg.workspace_dir / "input").mkdir(parents=True, exist_ok=True)
     (cfg.workspace_dir / "working").mkdir(parents=True, exist_ok=True)
     (cfg.workspace_dir / "submission").mkdir(parents=True, exist_ok=True)
 
-    copytree(cfg.data_dir, cfg.workspace_dir / "input", use_symlinks=not cfg.copy_data)
-    if cfg.preprocess_data:
-        preproc_data(cfg.workspace_dir / "input")
+    import os
+
+    for item in Path(cfg.data_dir).iterdir():
+        os.symlink(item, cfg.workspace_dir / item.name)
+
+    # copytree(cfg.data_dir, cfg.workspace_dir / "input", use_symlinks=not cfg.copy_data)
+    # if cfg.preprocess_data:
+    #     preproc_data(cfg.workspace_dir / "input")
 
 
 def save_run(cfg: Config, journal: Journal):

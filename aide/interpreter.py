@@ -6,6 +6,11 @@ Supports:
 - limits execution time
 """
 
+import re
+import shutil
+import subprocess
+from typing import List
+
 import logging
 import os
 import queue
@@ -86,7 +91,8 @@ class Interpreter:
         working_dir: Path | str,
         timeout: int = 3600,
         format_tb_ipython: bool = False,
-        agent_file_name: str = "runfile.py",
+        agent_file_name: str = None,
+        agent_run_cmd: List[str] = None
     ):
         """
         Simulates a standalone Python REPL with an execution time limit.
@@ -105,6 +111,7 @@ class Interpreter:
         self.timeout = timeout
         self.format_tb_ipython = format_tb_ipython
         self.agent_file_name = agent_file_name
+        self.agent_run_cmd = agent_run_cmd
         self.process: Process = None  # type: ignore
 
     def child_proc_setup(self, result_outq: Queue) -> None:
@@ -125,18 +132,66 @@ class Interpreter:
     def _run_session(
         self, code_inq: Queue, result_outq: Queue, event_outq: Queue
     ) -> None:
+        print(">> _run_session")
         self.child_proc_setup(result_outq)
 
         global_scope: dict = {}
         while True:
             code = code_inq.get()
+            print(f"> code is {code[:100]}\n(first 100 chars)")
             os.chdir(str(self.working_dir))
             with open(self.agent_file_name, "w") as f:
                 f.write(code)
+            
+            print(f"> code is saved to {Path(self.agent_file_name).resolve()}")
 
+            # Modified: in our setting, we find exec(compile()) may not correctly raise the exception
+            # event_outq.put(("state:ready",))
+            # try:
+            #     exec(compile(code, self.agent_file_name, "exec"), global_scope)
+            # except BaseException as e:
+            #     tb_str, e_cls_name, exc_info, exc_stack = exception_summary(
+            #         e,
+            #         self.working_dir,
+            #         self.agent_file_name,
+            #         self.format_tb_ipython,
+            #     )
+            #     result_outq.put(tb_str)
+            #     if e_cls_name == "KeyboardInterrupt":
+            #         e_cls_name = "TimeoutError"
+
+            #     event_outq.put(("state:finished", e_cls_name, exc_info, exc_stack))
+            # else:
+            #     event_outq.put(("state:finished", None, None, None))
+
+            # re-generate execution cmd if it is empty
+            if self.agent_run_cmd is None:
+                self.agent_run_cmd = ["python", self.agent_file_name]
+
+            # run with subprocess
             event_outq.put(("state:ready",))
             try:
-                exec(compile(code, self.agent_file_name, "exec"), global_scope)
+                result = subprocess.run(
+                    self.agent_run_cmd,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # redirect stderr to stdout
+                    timeout=self.timeout
+                )
+
+                if len(result.stdout) > 2000:
+                    result_output = result.stdout[-2000:]
+                    result_output = f"\n (First {len(result.stdout)-2000} characters are truncated, only the last 2000 are shown)"
+                else:
+                    result_output = result.stdout
+
+                if result.returncode == 0:
+                    # executed successfully
+                    event_outq.put(("state:finished", None, result_output, None))
+                else:
+                    # execution failed, but we let LLM to analyze
+                    event_outq.put(("state:finished", None, result_output, None))
+
             except BaseException as e:
                 tb_str, e_cls_name, exc_info, exc_stack = exception_summary(
                     e,
@@ -149,11 +204,10 @@ class Interpreter:
                     e_cls_name = "TimeoutError"
 
                 event_outq.put(("state:finished", e_cls_name, exc_info, exc_stack))
-            else:
-                event_outq.put(("state:finished", None, None, None))
 
-            # remove the file after execution (otherwise it might be included in the data preview)
-            os.remove(self.agent_file_name)
+            # Modified: it is okay to save the file
+            # # remove the file after execution (otherwise it might be included in the data preview)
+            # os.remove(self.agent_file_name)
 
             # put EOF marker to indicate that we're done
             result_outq.put("<|EOF|>")
@@ -164,6 +218,7 @@ class Interpreter:
         # - result_outq: receive stdout/stderr from child
         # - event_outq: receive events from child (e.g. state:ready, state:finished)
         # trunk-ignore(mypy/var-annotated)
+        print(">> create process")
         self.code_inq, self.result_outq, self.event_outq = Queue(), Queue(), Queue()
         self.process = Process(
             target=self._run_session,
@@ -201,6 +256,20 @@ class Interpreter:
 
         logger.info(f"REPL is executing code (reset_session={reset_session})")
 
+        # Modified: try to parse filename and command from code
+        match = re.search(r"#\s*filename\s*:\s*(.+)", code)
+        if match:
+            self.agent_file_name = match.group(1)
+        else:
+            self.agent_file_name = "main.py"
+        match = re.search(r"#\s*cmd\s*:\s*(.+)", code)
+        if match:
+            self.agent_run_cmd = match.group(1).strip().split(' ')
+            if self.agent_run_cmd[1] != self.agent_file_name:
+                print("[Warning] Not executing the current code!")
+        else:
+            self.agent_run_cmd = None
+
         if reset_session:
             if self.process is not None:
                 # terminate and clean up previous process
@@ -213,6 +282,8 @@ class Interpreter:
         assert self.process.is_alive()
 
         self.code_inq.put(code)
+
+        print(">> wait for child actually start execution")
 
         # wait for child to actually start execution (we don't want interrupt child setup)
         try:
@@ -238,6 +309,8 @@ class Interpreter:
         # this flag indicates that the child ahs exceeded the time limit and an interrupt was sent
         # if the child process dies without this flag being set, it's an unexpected termination
         child_in_overtime = False
+
+        print(">> start child")
 
         while True:
             try:
@@ -293,6 +366,8 @@ class Interpreter:
             output.append(self.result_outq.get())
         output.pop()  # remove the EOF marker
 
+        print(">> execution output =\n", output)
+
         e_cls_name, exc_info, exc_stack = state[1:]
 
         if e_cls_name == "TimeoutError":
@@ -303,4 +378,7 @@ class Interpreter:
             output.append(
                 f"Execution time: {humanize.naturaldelta(exec_time)} seconds (time limit is {humanize.naturaldelta(self.timeout)})."
             )
+        
+        print(">> exception info =\n", exc_info)
+        print(">> exception stack =\n", exc_stack)
         return ExecutionResult(output, exec_time, e_cls_name, exc_info, exc_stack)

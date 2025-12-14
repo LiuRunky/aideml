@@ -1,5 +1,6 @@
 """Backend for OpenAI API."""
 
+import os
 import json
 import logging
 import time
@@ -29,7 +30,11 @@ OPENAI_TIMEOUT_EXCEPTIONS = (
 @once
 def _setup_openai_client():
     global _client
-    _client = openai.OpenAI(max_retries=0)
+    _client = openai.OpenAI(
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        api_key=os.getenv("OPENAI_API_KEY"),
+        max_retries=0,
+    )
 
 
 def query(
@@ -85,5 +90,11 @@ def query(
         "model": completion.model,
         "created": completion.created,
     }
+    
+    print("\nOPENAI output (last 1000 chars)=")
+    if isinstance(output, str):
+        print(output[-1000:])
+    else:
+        print(output)
 
     return output, req_time, in_tokens, out_tokens, info

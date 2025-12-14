@@ -2,6 +2,7 @@ import logging
 import shutil
 import zipfile
 from pathlib import Path
+from typing import List
 
 logger = logging.getLogger("aide")
 
@@ -35,6 +36,54 @@ def copytree(src: Path, dst: Path, use_symlinks=True):
             shutil.copytree(f, dest_f)
         else:
             shutil.copyfile(f, dest_f)
+
+
+def copy_with_excludes(src: Path, dst: Path, excludes: List = None):
+    """
+    Copy contents of `src` to `dst`.
+    We allow excluding files and folders in the first-level directory.
+    We will keep symlinks as they are, and physically copy the other files.
+
+    Arguments:
+    - src: Path, source directory
+    - dst: Path, destination directory
+    - excludes: List, each element is a str
+    """
+    assert src.is_dir() and dst.is_dir()
+
+    for f in src.iterdir():
+        dest_f = dst / f.name
+        assert not dest_f.exists(), dest_f
+        if f.name in excludes:
+            # skip the excluded files and folders
+            continue
+        if f.is_dir():
+            shutil.copytree(f, dest_f, symlinks=True)
+        else:
+            shutil.copyfile(f, dest_f)
+
+
+def safe_clear_folder(src: Path):
+    """
+    Remove all contents within a folder without deleting folder itself.
+    We will remove the symbolic link but keep the original file intact.
+    """
+    assert src.is_dir()
+
+    def remove_symlink_only(src: Path):
+        for f in src.iterdir():
+            if f.is_dir():
+                remove_symlink_only(f)
+            elif f.is_symlink():
+                f.unlink()
+    
+    remove_symlink_only(src)
+
+    for f in src.iterdir():
+        if f.is_file():
+            f.unlink()
+        elif f.is_dir():
+            shutil.rmtree(f)
 
 
 def clean_up_dataset(path: Path):
@@ -98,3 +147,6 @@ def extract_archives(path: Path):
 def preproc_data(path: Path):
     extract_archives(path)
     clean_up_dataset(path)
+
+
+safe_clear_folder(Path("/root/autodl-tmp/LocalAIDE/agent/workspaces/test-task/best_solution"))
