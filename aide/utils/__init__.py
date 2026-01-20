@@ -1,3 +1,4 @@
+import os
 import logging
 import shutil
 import zipfile
@@ -49,14 +50,21 @@ def copy_with_excludes(src: Path, dst: Path, excludes: List = None):
     - dst: Path, destination directory
     - excludes: List, each element is a str
     """
+    print(f"Copy from {src} to {dst}, excludes = {excludes}")
     assert src.is_dir() and dst.is_dir()
 
     for f in src.iterdir():
         dest_f = dst / f.name
         assert not dest_f.exists(), dest_f
-        if f.name in excludes:
+        if excludes is not None and f.name in excludes:
             # skip the excluded files and folders
             continue
+
+        if f.is_symlink():
+            # process symlinks in the first-level directory
+            os.symlink(os.readlink(f), dest_f)
+            continue
+        
         if f.is_dir():
             shutil.copytree(f, dest_f, symlinks=True)
         else:
@@ -148,5 +156,3 @@ def preproc_data(path: Path):
     extract_archives(path)
     clean_up_dataset(path)
 
-
-safe_clear_folder(Path("/root/autodl-tmp/LocalAIDE/agent/workspaces/test-task/best_solution"))

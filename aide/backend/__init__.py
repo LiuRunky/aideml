@@ -31,6 +31,8 @@ def query(
     system_message: PromptType | None,
     user_message: PromptType | None,
     model: str,
+    step: int,
+    log_dir,
     temperature: float | None = None,
     max_tokens: int | None = None,
     func_spec: FunctionSpec | None = None,
@@ -80,5 +82,30 @@ def query(
     )
     logger.info(f"response: {output}", extra={"verbose": True})
     logger.info(f"---Query complete---", extra={"verbose": True})
+
+    # Modified: log queries and responses
+    import os
+    import json
+    from pathlib import Path
+
+    step_logs_dir = (Path(log_dir) / "steps").resolve()
+    if not os.path.exists(step_logs_dir):
+        os.makedirs(step_logs_dir)
+    
+    substep = 0
+    output_filename = f"steps_{step}_{substep}.json"
+    while os.path.exists(step_logs_dir / output_filename):
+        substep += 1
+        output_filename = f"steps_{step}_{substep}.json"
+    
+    query_dict = {}
+    query_dict["system_message"] = system_message
+    query_dict["user_message"] = user_message
+    query_dict["response"] = output
+    query_dict["input_tokens"] = in_tok_count
+    query_dict["output_tokens"] = out_tok_count
+
+    with open(step_logs_dir / output_filename, 'w', encoding="UTF-8") as f:
+        json.dump(query_dict, f, ensure_ascii=False, indent=2)
 
     return output

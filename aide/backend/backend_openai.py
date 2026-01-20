@@ -33,7 +33,7 @@ def _setup_openai_client():
     _client = openai.OpenAI(
         base_url=os.getenv("OPENAI_BASE_URL"),
         api_key=os.getenv("OPENAI_API_KEY"),
-        max_retries=0,
+        max_retries=2,
     )
 
 
@@ -53,6 +53,21 @@ def query(
         filtered_kwargs["tools"] = [func_spec.as_openai_tool_dict]
         # force the model the use the function
         filtered_kwargs["tool_choice"] = func_spec.openai_tool_choice_dict
+
+    model = filtered_kwargs["model"]
+    if model[0].lower() == 'o' and model[1].isdigit():
+        # for o-series models,
+        # `temperature` is disabled.
+        del filtered_kwargs["temperature"]
+    elif filtered_kwargs["model"].startswith("gpt-5"):
+        # for gpt-5 series models,
+        # `reasoning effort` is selectable;
+        # and `temperature` is disabled.
+        del filtered_kwargs["temperature"]
+        filtered_kwargs["reasoning_effort"] = "low"
+    else:
+        # in other cases, kwargs only contains `model` and `temperature`
+        pass
 
     t0 = time.time()
     completion = backoff_create(

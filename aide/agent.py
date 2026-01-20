@@ -223,6 +223,8 @@ class Agent:
                 model=self.acfg.code.model,
                 temperature=self.acfg.code.temp,
                 convert_system_to_user=self.acfg.convert_system_to_user,
+                step=self.current_step,
+                log_dir=self.cfg["log_dir"]
             )
 
             code = extract_code(completion_text)
@@ -481,6 +483,7 @@ class Agent:
                 # with open(best_solution_dir / "node_id.txt", "w") as f:
                 #     f.write(str(result_node.id))
 
+                # Modified: rename `best_submission` to `submission` for our setting
                 logger.info(f"Node {result_node.id} is the best node so far")
                 best_solution_dir = self.cfg.workspace_dir / "best_solution"
                 best_solution_dir.mkdir(exist_ok=True, parents=True)
@@ -502,11 +505,13 @@ class Agent:
                 #     best_solution_dir
                 # )
 
-                copy_with_excludes(
-                    self.cfg.workspace_dir,
-                    best_submission_dir,
-                    excludes=["best_solution", "best_submission"]
-                )
+                import os
+
+                if os.path.exists(self.cfg.workspace_dir / "submission"):
+                    copy_with_excludes(
+                        self.cfg.workspace_dir / "submission",
+                        best_submission_dir,
+                    )
                 copy_with_excludes(
                     self.cfg.workspace_dir,
                     best_solution_dir,
@@ -560,6 +565,8 @@ class Agent:
                 model=self.acfg.feedback.model,
                 temperature=self.acfg.feedback.temp,
                 convert_system_to_user=self.acfg.convert_system_to_user,
+                step=self.current_step,
+                log_dir=self.cfg["log_dir"]
             ),
         )
 

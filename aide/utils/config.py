@@ -177,8 +177,8 @@ def prep_agent_workspace(cfg: Config):
     """Setup the agent's workspace and preprocess data if necessary."""
     # Modified: we ask the agent to copy files directly to workspace
     # (cfg.workspace_dir / "input").mkdir(parents=True, exist_ok=True)
-    (cfg.workspace_dir / "working").mkdir(parents=True, exist_ok=True)
-    (cfg.workspace_dir / "submission").mkdir(parents=True, exist_ok=True)
+    # (cfg.workspace_dir / "working").mkdir(parents=True, exist_ok=True)
+    # (cfg.workspace_dir / "submission").mkdir(parents=True, exist_ok=True)
 
     import os
 

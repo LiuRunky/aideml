@@ -138,12 +138,12 @@ class Interpreter:
         global_scope: dict = {}
         while True:
             code = code_inq.get()
-            print(f"> code is {code[:100]}\n(first 100 chars)")
+            # print(f"> code is {code[:100]}\n(first 100 chars)")
             os.chdir(str(self.working_dir))
             with open(self.agent_file_name, "w") as f:
                 f.write(code)
             
-            print(f"> code is saved to {Path(self.agent_file_name).resolve()}")
+            # print(f"> code is saved to {Path(self.agent_file_name).resolve()}")
 
             # Modified: in our setting, we find exec(compile()) may not correctly raise the exception
             # event_outq.put(("state:ready",))
@@ -181,18 +181,24 @@ class Interpreter:
 
                 if len(result.stdout) > 2000:
                     result_output = result.stdout[-2000:]
-                    result_output = f"\n (First {len(result.stdout)-2000} characters are truncated, only the last 2000 are shown)"
+                    result_output += f"\n (First {len(result.stdout)-2000} characters are truncated, only the last 2000 are shown)"
                 else:
                     result_output = result.stdout
 
+                # with open(self.working_dir / "result_output.txt", 'w', encoding="UTF-8") as file:
+                #     file.write(result_output)
+
+                result_outq.put(result_output)
+                
                 if result.returncode == 0:
                     # executed successfully
-                    event_outq.put(("state:finished", None, result_output, None))
+                    event_outq.put(("state:finished", None, None, None))
                 else:
                     # execution failed, but we let LLM to analyze
-                    event_outq.put(("state:finished", None, result_output, None))
+                    event_outq.put(("state:finished", None, None, None))
 
             except BaseException as e:
+                # generally this will not be captured because we use subprocess
                 tb_str, e_cls_name, exc_info, exc_stack = exception_summary(
                     e,
                     self.working_dir,
@@ -372,11 +378,11 @@ class Interpreter:
 
         if e_cls_name == "TimeoutError":
             output.append(
-                f"TimeoutError: Execution exceeded the time limit of {humanize.naturaldelta(self.timeout)}"
+                f"TimeoutError: Execution exceeded the time limit of {humanize.precisedelta(self.timeout, minimum_unit='seconds')}"
             )
         else:
             output.append(
-                f"Execution time: {humanize.naturaldelta(exec_time)} seconds (time limit is {humanize.naturaldelta(self.timeout)})."
+                f"Execution time: {humanize.precisedelta(exec_time, minimum_unit='seconds')} (time limit is {humanize.precisedelta(self.timeout, minimum_unit='seconds')})."
             )
         
         print(">> exception info =\n", exc_info)
