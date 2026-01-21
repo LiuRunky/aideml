@@ -92,7 +92,8 @@ def query(
         output = response.text
     in_tokens = response.usage_metadata.prompt_token_count
     out_tokens = response.usage_metadata.candidates_token_count
+    cached_tokens = None
     info = {}  # this isnt used anywhere, but is an expected return value
 
     # only `output` is actually used by scaffolding
-    return output, req_time, in_tokens, out_tokens, info
+    return output, req_time, in_tokens, out_tokens, cached_tokens, info

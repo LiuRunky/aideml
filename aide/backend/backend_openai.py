@@ -99,6 +99,7 @@ def query(
 
     in_tokens = completion.usage.prompt_tokens
     out_tokens = completion.usage.completion_tokens
+    cached_tokens = completion.usage.prompt_tokens_details.cached_tokens if hasattr(completion.usage, "prompt_tokens_details") else None
 
     info = {
         "system_fingerprint": completion.system_fingerprint,
@@ -112,4 +113,4 @@ def query(
     else:
         print(output)
 
-    return output, req_time, in_tokens, out_tokens, info
+    return output, req_time, in_tokens, out_tokens, cached_tokens, info

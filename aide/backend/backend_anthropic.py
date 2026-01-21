@@ -68,9 +68,10 @@ def query(
     output: str = message.content[0].text
     in_tokens = message.usage.input_tokens
     out_tokens = message.usage.output_tokens
+    cached_tokens = None
 
     info = {
         "stop_reason": message.stop_reason,
     }
 
-    return output, req_time, in_tokens, out_tokens, info
+    return output, req_time, in_tokens, out_tokens, cached_tokens, info

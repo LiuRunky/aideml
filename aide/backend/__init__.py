@@ -73,7 +73,7 @@ def query(
 
     provider = determine_provider(model)
     query_func = provider_to_query_func[provider]
-    output, req_time, in_tok_count, out_tok_count, info = query_func(
+    output, req_time, in_tok_count, out_tok_count, cached_tokens, info = query_func(
         system_message=system_message,
         user_message=user_message,
         func_spec=func_spec,
@@ -104,6 +104,7 @@ def query(
     query_dict["response"] = output
     query_dict["input_tokens"] = in_tok_count
     query_dict["output_tokens"] = out_tok_count
+    query_dict["cached_tokens"] = cached_tokens
 
     with open(step_logs_dir / output_filename, 'w', encoding="UTF-8") as f:
         json.dump(query_dict, f, ensure_ascii=False, indent=2)
