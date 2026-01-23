@@ -64,7 +64,7 @@ def query(
         # `reasoning effort` is selectable;
         # and `temperature` is disabled.
         del filtered_kwargs["temperature"]
-        filtered_kwargs["reasoning_effort"] = "low"
+        filtered_kwargs["reasoning_effort"] = os.getenv("OPENAI_REASONING_EFFORT")
     else:
         # in other cases, kwargs only contains `model` and `temperature`
         pass
