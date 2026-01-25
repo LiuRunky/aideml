@@ -70,13 +70,24 @@ def query(
         pass
 
     t0 = time.time()
-    completion = backoff_create(
-        _client.chat.completions.create,
-        OPENAI_TIMEOUT_EXCEPTIONS,
-        messages=messages,
-        **filtered_kwargs,
-    )
+
+    while True:
+        try:
+            completion = backoff_create(
+                _client.chat.completions.create,
+                OPENAI_TIMEOUT_EXCEPTIONS,
+                messages=messages,
+                **filtered_kwargs,
+            )
+            break
+        except openai.RateLimitError as e:
+            print(f"RateLimitError: {e}")
+            time.sleep(random.randint(30, 60))
+        except Exception as e:
+            raise
+
     req_time = time.time() - t0
+    time.sleep(15)
 
     choice = completion.choices[0]
 
