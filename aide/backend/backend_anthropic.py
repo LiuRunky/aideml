@@ -31,7 +31,7 @@ def query(
     func_spec: FunctionSpec | None = None,
     convert_system_to_user: bool = False,
     **model_kwargs,
-) -> tuple[OutputType, float, int, int, dict]:
+) -> tuple[OutputType, float, int, int, int, dict]:
     _setup_anthropic_client()
 
     filtered_kwargs: dict = select_values(notnone, model_kwargs)  # type: ignore

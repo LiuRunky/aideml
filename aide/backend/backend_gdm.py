@@ -58,7 +58,7 @@ def query(
     func_spec: FunctionSpec | None = None,
     convert_system_to_user: bool = False,
     **model_kwargs,
-) -> tuple[OutputType, float, int, int, dict]:
+) -> tuple[OutputType, float, int, int, int, dict]:
     model = model_kwargs.pop("model")
     temperature = model_kwargs.pop("temperature", None)
 
