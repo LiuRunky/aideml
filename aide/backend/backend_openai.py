@@ -20,7 +20,6 @@ _client: openai.OpenAI = None  # type: ignore
 
 
 OPENAI_TIMEOUT_EXCEPTIONS = (
-    openai.RateLimitError,
     openai.APIConnectionError,
     openai.APITimeoutError,
     openai.InternalServerError,
@@ -82,6 +81,7 @@ def query(
             break
         except openai.RateLimitError as e:
             print(f"RateLimitError: {e}")
+            import random
             time.sleep(random.randint(30, 60))
         except Exception as e:
             raise
